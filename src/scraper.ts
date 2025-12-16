@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { createObjectCsvWriter } from 'csv-writer';
+import { parse } from 'csv-parse/sync';
 
 interface JobListing {
   pozisyon: string;
@@ -15,11 +16,16 @@ class KariyerNetScraper {
   private page: Page | null = null;
   private csvWriter: any;
   private outputFile: string;
+  private existingJobs: Set<string> = new Set(); // Duplicate kontrolü için
 
   constructor(outputFileName: string = 'kariyernet_ilanlar.csv') {
     this.outputFile = path.join(__dirname, '..', outputFileName);
     
-    // CSV Writer oluştur
+    // Mevcut CSV dosyasını oku ve duplicate kontrolü için hash set oluştur
+    this.loadExistingJobs();
+    
+    // CSV Writer oluştur (append modu için özel yapılandırma)
+    const fileExists = fs.existsSync(this.outputFile);
     this.csvWriter = createObjectCsvWriter({
       path: this.outputFile,
       header: [
@@ -27,8 +33,61 @@ class KariyerNetScraper {
         { id: 'ilanMetni', title: 'IlanMetni' }
       ],
       encoding: 'utf8',
-      fieldDelimiter: ';'
+      fieldDelimiter: ';',
+      append: fileExists // Dosya varsa append modunda aç
     });
+  }
+
+  // Mevcut CSV dosyasındaki ilanları yükle (duplicate kontrolü için)
+  private loadExistingJobs(): void {
+    try {
+      if (fs.existsSync(this.outputFile)) {
+        const fileContent = fs.readFileSync(this.outputFile, 'utf-8');
+        const records: any[] = parse(fileContent, {
+          columns: true,
+          skip_empty_lines: true,
+          delimiter: ';',
+          bom: true,
+          trim: true,
+        });
+
+        // Her ilan için hash oluştur (pozisyon + ilanMetni'nin ilk 200 karakteri)
+        for (const record of records) {
+          const pozisyon = (record.Pozisyon || record.pozisyon || '').trim();
+          const ilanMetni = (record.IlanMetni || record.ilanMetni || '').trim();
+          if (pozisyon && ilanMetni) {
+            // Hash oluştur: pozisyon + ilanMetni'nin ilk 200 karakteri
+            const hash = this.createJobHash(pozisyon, ilanMetni);
+            this.existingJobs.add(hash);
+          }
+        }
+        console.log(`📋 Mevcut CSV'den ${this.existingJobs.size} ilan yüklendi (duplicate kontrolü için)`);
+      } else {
+        console.log('📋 Yeni CSV dosyası oluşturulacak');
+      }
+    } catch (error) {
+      console.warn('⚠️  Mevcut CSV dosyası okunamadı, yeni dosya oluşturulacak:', error);
+    }
+  }
+
+  // İlan için hash oluştur (duplicate kontrolü için)
+  private createJobHash(pozisyon: string, ilanMetni: string): string {
+    // Pozisyon + ilanMetni'nin ilk 200 karakterini normalize et ve hash oluştur
+    const normalizedPozisyon = pozisyon.toLowerCase().trim().replace(/\s+/g, ' ');
+    const normalizedIlanMetni = ilanMetni.substring(0, 200).toLowerCase().trim().replace(/\s+/g, ' ');
+    return `${normalizedPozisyon}|||${normalizedIlanMetni}`;
+  }
+
+  // İlanın daha önce kaydedilip kaydedilmediğini kontrol et
+  private isDuplicate(pozisyon: string, ilanMetni: string): boolean {
+    const hash = this.createJobHash(pozisyon, ilanMetni);
+    return this.existingJobs.has(hash);
+  }
+
+  // Yeni ilanı hash set'e ekle
+  private addToExistingJobs(pozisyon: string, ilanMetni: string): void {
+    const hash = this.createJobHash(pozisyon, ilanMetni);
+    this.existingJobs.add(hash);
   }
 
   async init() {
@@ -515,6 +574,13 @@ class KariyerNetScraper {
           const jobData = await this.scrapeJobDetail(jobUrl);
           
           if (jobData) {
+            // Duplicate kontrolü yap
+            if (this.isDuplicate(jobData.pozisyon, jobData.ilanMetni)) {
+              console.log(`⏭️  Bu ilan zaten kayıtlı, atlanıyor...`);
+              console.log(`📝 Pozisyon: ${jobData.pozisyon.substring(0, 60)}${jobData.pozisyon.length > 60 ? '...' : ''}`);
+              continue;
+            }
+            
             allJobs.push(jobData);
             successCount++;
             console.log(`📝 Pozisyon: ${jobData.pozisyon.substring(0, 60)}${jobData.pozisyon.length > 60 ? '...' : ''}`);
@@ -522,6 +588,8 @@ class KariyerNetScraper {
             
             // Her ilan sonrası CSV'ye ekle
             await this.csvWriter.writeRecords([jobData]);
+            // Hash set'e ekle (bir sonraki kontrol için)
+            this.addToExistingJobs(jobData.pozisyon, jobData.ilanMetni);
             console.log(`✅ İlan başarıyla kaydedildi! (${successCount}/${targetCount})`);
           } else {
             console.log(`⚠️  Bu ilan için veri bulunamadı, atlanıyor...`);
