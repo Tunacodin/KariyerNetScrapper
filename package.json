@@ -1,0 +1,29 @@
+{
+  "name": "business-scraping",
+  "version": "1.0.0",
+  "description": "Kariyer.net iş ilanları scraping projesi",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "scrape": "ts-node src/scraper.ts"
+  },
+  "keywords": ["scraping", "kariyer.net", "job-listings"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "csv-writer": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.2"
+  }
+}
+
+
+
+
+
