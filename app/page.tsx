@@ -140,6 +140,8 @@ export default function Home() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [selectedJob, setSelectedJob] = useState<JobListing | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // CSV verilerini çek
   const fetchData = async () => {
@@ -158,10 +160,15 @@ export default function Home() {
       const result: ApiResponse = await response.json();
       
       if (result.success) {
+        // Tüm kayıtları set et (filtreleme yok)
         setData(result.data);
         setError(null);
         if (result.lastUpdated) {
           setLastUpdated(new Date(result.lastUpdated));
+        }
+        // Konsola kayıt sayısını yazdır (debug için)
+        if (result.count) {
+          console.log(`✅ ${result.count} ilan yüklendi`);
         }
       } else {
         throw new Error(result.error || 'Bilinmeyen hata');
@@ -179,16 +186,64 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // Otomatik yenileme (her 3 saniyede bir)
+  // Otomatik yenileme (her 2 saniyede bir - daha sık güncelleme)
   useEffect(() => {
     if (!autoRefresh) return;
 
     const interval = setInterval(() => {
       fetchData();
-    }, 3000); // 3 saniye
+    }, 2000); // 2 saniye - realtime için daha sık
 
     return () => clearInterval(interval);
   }, [autoRefresh]);
+
+  // ESC tuşu ile modal kapatma ve body scroll kontrolü
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isModalOpen) {
+        closeModal();
+      }
+    };
+
+    if (isModalOpen) {
+      // Modal açıkken body scroll'unu engelle
+      document.body.style.overflow = 'hidden';
+      window.addEventListener('keydown', handleEscape);
+    } else {
+      // Modal kapalıyken body scroll'unu geri aç
+      document.body.style.overflow = 'unset';
+    }
+
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
+    };
+  }, [isModalOpen]);
+
+  // Pozisyon başlığından kategori ve şirket adını ayır
+  const parsePosition = (pozisyon: string) => {
+    if (!pozisyon) return { title: '-', company: '', category: 'Genel' };
+    
+    // Satırları ayır ve temizle
+    const lines = pozisyon
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l && l.length > 0);
+    
+    // İlk satır pozisyon başlığı
+    const title = lines[0] || pozisyon.trim();
+    
+    // Son satır genelde şirket adı (eğer birden fazla satır varsa)
+    const company = lines.length > 1 ? lines[lines.length - 1] : '';
+    
+    // Kategoriyi pozisyon adından çıkar (ilk 2 kelime)
+    const words = title.split(/\s+/).filter(w => w);
+    const category = words.length >= 2 
+      ? `${words[0]} ${words[1]}` 
+      : words[0] || 'Genel';
+    
+    return { title, company, category };
+  };
 
   // Filtreleme
   const filteredData = useMemo(() => {
@@ -201,6 +256,17 @@ export default function Home() {
       return pozisyon.includes(searchLower) || ilanMetni.includes(searchLower);
     });
   }, [data, searchTerm]);
+
+  // Modal aç/kapa
+  const openModal = (job: JobListing) => {
+    setSelectedJob(job);
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setSelectedJob(null);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -304,11 +370,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* Data Table */}
+        {/* Job Cards */}
         {!loading && !error && (
-          <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+          <div>
             {filteredData.length === 0 ? (
-              <div className="p-12 text-center text-gray-500">
+              <div className="bg-white rounded-lg shadow-lg p-12 text-center text-gray-500">
                 <p className="text-lg">Sonuç bulunamadı</p>
                 {searchTerm && (
                   <p className="mt-2 text-sm">
@@ -317,70 +383,123 @@ export default function Home() {
                 )}
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white">
-                    <tr>
-                      <th className="px-6 py-4 text-left font-semibold">#</th>
-                      <th className="px-6 py-4 text-left font-semibold">
-                        Pozisyon
-                      </th>
-                      <th className="px-6 py-4 text-left font-semibold">
-                        İlan Metni
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {filteredData.map((job, index) => (
-                      <tr
-                        key={index}
-                        className="hover:bg-blue-50 transition-colors"
-                      >
-                        <td className="px-6 py-4 text-gray-600 font-medium">
-                          {index + 1}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-semibold text-gray-800 text-lg">
-                            {job.pozisyon || '-'}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-gray-700 max-w-4xl">
-                            {job.ilanMetni ? (
-                              <div className="space-y-3">
-                                {parseJobDescription(job.ilanMetni).map((section, sectionIndex) => (
-                                  <div
-                                    key={sectionIndex}
-                                    className="border-l-4 border-blue-500 pl-4 py-3 bg-gradient-to-r from-blue-50 to-transparent rounded-r-lg shadow-sm"
-                                  >
-                                    <h4 className="font-bold text-blue-800 text-base mb-2 flex items-center gap-2">
-                                      <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                                      {section.title}
-                                    </h4>
-                                    <div className="text-gray-700 whitespace-pre-wrap leading-relaxed text-sm pl-4">
-                                      {section.content}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-gray-400">-</span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredData.map((job, index) => {
+                  const { title, company, category } = parsePosition(job.pozisyon);
+                  return (
+                    <div
+                      key={index}
+                      onClick={() => openModal(job)}
+                      className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 cursor-pointer border-l-4 border-blue-500 p-6 hover:border-blue-600 transform hover:-translate-y-1"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h3 className="text-lg font-bold text-gray-800 mb-2 line-clamp-2">
+                            {title}
+                          </h3>
+                          {company && (
+                            <p className="text-sm text-gray-600 mb-2">
+                              🏢 {company}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
+                          {category || 'Genel'}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          Detay için tıklayın →
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Detail Modal */}
+        {isModalOpen && selectedJob && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            onClick={closeModal}
+          >
+            <div
+              className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <h2 className="text-2xl font-bold mb-2">
+                      {parsePosition(selectedJob.pozisyon).title}
+                    </h2>
+                    {parsePosition(selectedJob.pozisyon).company && (
+                      <p className="text-blue-100 text-lg">
+                        🏢 {parsePosition(selectedJob.pozisyon).company}
+                      </p>
+                    )}
+                    <span className="inline-block mt-2 px-3 py-1 bg-white bg-opacity-20 text-white text-sm font-semibold rounded-full">
+                      {parsePosition(selectedJob.pozisyon).category || 'Genel'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={closeModal}
+                    className="ml-4 text-white hover:text-gray-200 text-2xl font-bold"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Content */}
+              <div className="flex-1 overflow-y-auto p-6 min-h-0">
+                {selectedJob.ilanMetni ? (
+                  <div className="space-y-4">
+                    {parseJobDescription(selectedJob.ilanMetni).map((section, sectionIndex) => (
+                      <div
+                        key={sectionIndex}
+                        className="border-l-4 border-blue-500 pl-4 py-4 bg-gradient-to-r from-blue-50 to-transparent rounded-r-lg shadow-sm"
+                      >
+                        <h4 className="font-bold text-blue-800 text-lg mb-3 flex items-center gap-2">
+                          <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                          {section.title}
+                        </h4>
+                        <div className="text-gray-700 whitespace-pre-wrap leading-relaxed text-sm pl-4">
+                          {section.content}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-500">İlan metni bulunamadı.</p>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="border-t border-gray-200 p-4 bg-gray-50 flex justify-end">
+                <button
+                  onClick={closeModal}
+                  className="px-6 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors"
+                >
+                  Kapat
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
         {/* Footer */}
         <div className="mt-6 text-center text-gray-600 text-sm">
           <p>
-            Veriler her 3 saniyede bir otomatik olarak güncellenmektedir
+            Veriler her 2 saniyede bir otomatik olarak güncellenmektedir (Realtime)
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Toplam {data.length} ilan görüntüleniyor
+            {searchTerm && ` (${filteredData.length} filtrelenmiş)`}
           </p>
         </div>
       </div>

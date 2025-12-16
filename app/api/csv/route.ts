@@ -20,31 +20,63 @@ export async function GET() {
     
     // CSV'yi parse et (semicolon delimiter, çok satırlı ve tırnaklı format desteği)
     // Not: CSV formatı çok satırlı ve tırnaklı olduğu için özel ayarlar gerekli
-    const records: JobListing[] = parse(fileContent, {
-      columns: true,
-      skip_empty_lines: true,
-      delimiter: ';',
-      bom: true, // UTF-8 BOM desteği
-      trim: false, // Trim yapma, çünkü çok satırlı format bozulabilir
-      relax_column_count: true, // Kolon sayısı esnekliği
-      relax_quotes: false, // Tırnak kurallarına uy
-      quote: '"', // Tırnak karakteri
-      escape: '"', // Escape karakteri (çift tırnak)
-      ltrim: false,
-      rtrim: false,
-      cast: false, // Otomatik tip dönüşümü yapma
-      skip_records_with_error: false, // Hatalı kayıtları atlama
-    });
+    let records: any[] = [];
+    try {
+      records = parse(fileContent, {
+        columns: true,
+        skip_empty_lines: false, // Boş satırları da oku (sonra filtreleriz)
+        delimiter: ';',
+        bom: true, // UTF-8 BOM desteği
+        trim: false, // Trim yapma, çünkü çok satırlı format bozulabilir
+        relax_column_count: true, // Kolon sayısı esnekliği
+        relax_quotes: true, // Tırnak kurallarını esnet
+        quote: '"', // Tırnak karakteri
+        escape: '"', // Escape karakteri (çift tırnak)
+        ltrim: false,
+        rtrim: false,
+        cast: false, // Otomatik tip dönüşümü yapma
+        skip_records_with_error: true, // Hatalı kayıtları atla
+      });
+    } catch (parseError: any) {
+      console.error('CSV parse hatası:', parseError);
+      // Hata olsa bile devam et, kısmi veri döndür
+    }
+    
+    console.log(`CSV parse edildi: ${records.length} ham kayıt bulundu`);
     
     // Parse edilen verileri temizle ve formatla
-    const cleanedRecords: JobListing[] = records.map((record: any) => {
-      return {
-        pozisyon: (record.Pozisyon || record.pozisyon || '').trim().replace(/\n\s+/g, ' ').replace(/\s+/g, ' '),
-        ilanMetni: (record.IlanMetni || record.ilanMetni || '').trim(),
-      };
-    }).filter((record: JobListing) => record.pozisyon || record.ilanMetni); // Boş kayıtları filtrele
+    const cleanedRecords: JobListing[] = records
+      .map((record: any) => {
+        const pozisyon = (record.Pozisyon || record.pozisyon || '').trim();
+        const ilanMetni = (record.IlanMetni || record.ilanMetni || '').trim();
+        
+        // Pozisyon alanını temizle (fazla boşlukları azalt ama yapıyı koru)
+        const cleanedPozisyon = pozisyon
+          .replace(/\n\s*\n/g, '\n') // Çift satır sonlarını tek yap
+          .replace(/\s{3,}/g, ' ') // 3+ boşluğu tek boşluğa çevir
+          .trim();
+        
+        return {
+          pozisyon: cleanedPozisyon,
+          ilanMetni: ilanMetni,
+        };
+      })
+      .filter((record: JobListing) => {
+        // Sadece gerçekten boş olanları filtrele
+        const hasPozisyon = record.pozisyon && record.pozisyon.trim().length > 0;
+        const hasIlanMetni = record.ilanMetni && record.ilanMetni.trim().length > 0;
+        return hasPozisyon || hasIlanMetni;
+      });
     
-    console.log(`CSV parse edildi: ${cleanedRecords.length} kayıt bulundu`);
+    console.log(`✅ Temizlenmiş kayıt sayısı: ${cleanedRecords.length}`);
+    console.log(`📊 İlk 3 kayıt örneği:`, cleanedRecords.slice(0, 3).map(r => ({
+      pozisyon: r.pozisyon.substring(0, 50) + '...',
+      ilanMetniLength: r.ilanMetni.length
+    })));
+    
+    if (cleanedRecords.length === 0) {
+      console.warn('⚠️  UYARI: Hiç kayıt bulunamadı! CSV dosyası boş olabilir veya parse hatası var.');
+    }
     
     return NextResponse.json(
       {
